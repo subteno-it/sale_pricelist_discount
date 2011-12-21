@@ -25,7 +25,7 @@
 
 {
     'name': 'Sale Pricelist Discount',
-    'version': '0.1.0',
+    'version': '0.2.0',
     'category': 'Custom',
     'description': """Sale Pricelist Discount""",
     'author': 'SYLEAM Info Services',
