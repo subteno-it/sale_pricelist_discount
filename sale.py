@@ -28,6 +28,8 @@
 from osv import osv
 from tools.translate import _
 import time
+from tools import DEFAULT_SERVER_DATE_FORMAT, float_compare
+
 
 class sale_order_line(osv.osv):
     _inherit = 'sale.order.line'
@@ -35,51 +37,39 @@ class sale_order_line(osv.osv):
     def product_id_change(self, cr, uid, ids, pricelist, product, qty=0,
             uom=False, qty_uos=0, uos=False, name='', partner_id=False,
             lang=False, update_tax=True, date_order=False, packaging=False, fiscal_position=False, flag=False, context=None):
+        """
+        Not possible to super this method, so rewrite it.
+        """
+        context = context or {}
+        lang = lang or context.get('lang',False)
         if not  partner_id:
-            raise osv.except_osv(_('No Customer Defined !'), _('You have to select a customer in the sale form !\nPlease set one customer before choosing a product.'))
+            raise osv.except_osv(_('No Customer Defined !'), _('You have to select a customer in the sales form !\nPlease set one customer before choosing a product.'))
         warning = {}
         product_uom_obj = self.pool.get('product.uom')
         partner_obj = self.pool.get('res.partner')
         product_obj = self.pool.get('product.product')
+        context = {'lang': lang, 'partner_id': partner_id}
         if partner_id:
             lang = partner_obj.browse(cr, uid, partner_id).lang
-        context = {'lang': lang, 'partner_id': partner_id}
+        context_partner = {'lang': lang, 'partner_id': partner_id}
+
         if not product:
             return {'value': {'th_weight': 0, 'product_packaging': False,
                 'product_uos_qty': qty}, 'domain': {'product_uom': [],
                    'product_uos': []}}
-
         if not date_order:
-            date_order = time.strftime('%Y-%m-%d')
+            date_order = time.strftime(DEFAULT_SERVER_DATE_FORMAT)
 
-        result = {}
+        res = self.product_packaging_change(cr, uid, ids, pricelist, product, qty, uom, partner_id, packaging, context=context)
+        result = res.get('value', {})
+        warning_msgs = res.get('warning') and res['warning']['message'] or ''
         product_obj = product_obj.browse(cr, uid, product, context=context)
-        if not packaging and product_obj.packaging:
-            packaging = product_obj.packaging[0].id
-            result['product_packaging'] = packaging
 
-        if packaging:
-            default_uom = product_obj.uom_id and product_obj.uom_id.id
-            pack = self.pool.get('product.packaging').browse(cr, uid, packaging, context)
-            q = product_uom_obj._compute_qty(cr, uid, uom, pack.qty, default_uom)
-#            qty = qty - qty % q + q
-            if qty and (q and not (qty % q) == 0):
-                ean = pack.ean
-                qty_pack = pack.qty
-                type_ul = pack.ul
-                warn_msg = _("You selected a quantity of %d Units.\nBut it's not compatible with the selected packaging.\nHere is a proposition of quantities according to the packaging: ") % (qty)
-                warn_msg = warn_msg + "\n\n" + _("EAN: ") + str(ean) + _(" Quantity: ") + str(qty_pack) + _(" Type of ul: ") + str(type_ul.name)
-                warning = {
-                    'title': _('Packing Information !'),
-                    'message': warn_msg
-                    }
-            result['product_uom_qty'] = qty
-
+        uom2 = False
         if uom:
             uom2 = product_uom_obj.browse(cr, uid, uom)
             if product_obj.uom_id.category_id.id != uom2.category_id.id:
                 uom = False
-
         if uos:
             if product_obj.uos_id:
                 uos2 = product_uom_obj.browse(cr, uid, uos)
@@ -87,16 +77,16 @@ class sale_order_line(osv.osv):
                     uos = False
             else:
                 uos = False
-        result.update({'type': product_obj.procure_method})
         if product_obj.description_sale:
             result['notes'] = product_obj.description_sale
         fpos = fiscal_position and self.pool.get('account.fiscal.position').browse(cr, uid, fiscal_position) or False
         if update_tax: #The quantity only have changed
             result['delay'] = (product_obj.sale_delay or 0.0)
-            partner = partner_obj.browse(cr, uid, partner_id)
             result['tax_id'] = self.pool.get('account.fiscal.position').map_tax(cr, uid, fpos, product_obj.taxes_id)
+            result.update({'type': product_obj.procure_method})
+
         if not flag:
-            result['name'] = self.pool.get('product.product').name_get(cr, uid, [product_obj.id], context=context)[0][1]
+            result['name'] = self.pool.get('product.product').name_get(cr, uid, [product_obj.id], context=context_partner)[0][1]
         domain = {}
         if (not uom) and (not uos):
             result['product_uom'] = product_obj.uom_id.id
@@ -129,32 +119,44 @@ class sale_order_line(osv.osv):
                 result['product_uos_qty'] = qty
             result['th_weight'] = q * product_obj.weight        # Round the quantity up
 
+        if not uom2:
+            uom2 = product_obj.uom_id
+        compare_qty = float_compare(product_obj.virtual_available * uom2.factor, qty * product_obj.uom_id.factor, precision_rounding=product_obj.uom_id.rounding)
+        if (product_obj.type=='product') and int(compare_qty) == -1 \
+          and (product_obj.procure_method=='make_to_stock'):
+            warn_msg = _('You plan to sell %.2f %s but you only have %.2f %s available !\nThe real stock is %.2f %s. (without reservations)') % \
+                    (qty, uom2 and uom2.name or product_obj.uom_id.name,
+                     max(0,product_obj.virtual_available), product_obj.uom_id.name,
+                     max(0,product_obj.qty_available), product_obj.uom_id.name)
+            warning_msgs += _("Not enough stock ! : ") + warn_msg + "\n\n"
         # get unit price
 
         if not pricelist:
-            warning = {
-                'title': 'No Pricelist !',
-                'message':
-                    'You have to select a pricelist in the sale form !\n'
-                    'Please set one before choosing a product.'
-                }
+            warn_msg = _('You have to select a pricelist or a customer in the sales form !\n'
+                    'Please set one before choosing a product.')
+            warning_msgs += _("No Pricelist ! : ") + warn_msg +"\n\n"
         else:
             price_dict = self.pool.get('product.pricelist').price_get(cr, uid, [pricelist],
                     product, qty or 1.0, partner_id, {
-                        'uom': uom,
+                        'uom': uom or result.get('product_uom'),
                         'date': date_order,
+                        'discount': True,
                         })
-            price = price_dict.get(pricelist)
-            result.update({'discount': price_dict.get('discount')})
+            price = price_dict[pricelist]
+            if price_dict.get('discount', False):
+                result.update({'discount': price_dict['discount']})
             if price is False:
-                warning = {
-                    'title': 'No valid pricelist line found !',
-                    'message':
-                        "Couldn't find a pricelist line matching this product and quantity.\n"
-                        "You have to change either the product, the quantity or the pricelist."
-                    }
+                warn_msg = _("Couldn't find a pricelist line matching this product and quantity.\n"
+                        "You have to change either the product, the quantity or the pricelist.")
+
+                warning_msgs += _("No valid pricelist line found ! :") + warn_msg +"\n\n"
             else:
                 result.update({'price_unit': price})
+        if warning_msgs:
+            warning = {
+                       'title': _('Configuration Error !'),
+                       'message' : warning_msgs
+                    }
         return {'value': result, 'domain': domain, 'warning': warning}
 
 sale_order_line()
