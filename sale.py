@@ -40,6 +40,9 @@ class sale_order_line(osv.osv):
         """
         Not possible to super this method, so rewrite it.
         """
+        result =  super(sale_order_line, self).product_id_change( cr, uid, ids, pricelist, product, qty,
+            uom, qty_uos, uos, name, partner_id,
+            lang, update_tax, date_order, packaging, fiscal_position, flag, context=context)
         context = context or {}
         lang = lang or context.get('lang',False)
         if not  partner_id:
