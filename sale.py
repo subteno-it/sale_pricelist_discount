@@ -47,15 +47,15 @@ class sale_order_line(osv.osv):
         if not date_order:
             date_order = time.strftime(DEFAULT_SERVER_DATE_FORMAT)
 
-        # get unit price
+        # get discount
         price_dict = self.pool.get('product.pricelist').price_get(cr, uid, [pricelist],
                 product, qty or 1.0, partner_id, {
-                    'uom': uom or result.get('product_uom'),
+                    'uom': uom or self.pool.get('product.product').browse(cr, uid, product, context=context).uom_id.id,
                     'date': date_order,
                     'discount': True,
                     })
         if price_dict.get('discount', False):
-            result.update({'discount': price_dict['discount']})
+            result['value']['discount'] = price_dict['discount']
         return result
 
 sale_order_line()
