@@ -28,8 +28,8 @@
 {
     'name': 'Sale Pricelist Discount',
     'version': '0.3',
-    'category': 'Custom',
-    'description': """Sale Pricelist Discount""",
+    'category': 'Sales Management',
+    'description': """Get Discount in pricelist and put it in discount sale's field""",
     'author': 'SYLEAM',
     'depends': [
             'base',
